@@ -1,27 +1,58 @@
 name: Build
+
 on:
   workflow_dispatch:
-      inputs:
-        package_name:
-          description: "Package name of the game:"
-          required: true
+    inputs:
+      package_name:
+        description: "Package name of the game (e.g. com.example.game)"
+        required: true
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: 11
-        cache: gradle
-    - run: |
-        chmod +x ./gradlew
-        sed -i 's/moduleDescription = "/moduleDescription = "(${{ github.event.inputs.package_name }}) /g' module.gradle
-        sed -i "s/com.game.packagename/${{ github.event.inputs.package_name }}/g" module/src/main/cpp/game.h
-        ./gradlew :module:assembleRelease
-    - uses: actions/upload-artifact@v3
-      with:
-        name: zygisk-il2cppdumper
-        path: out/magisk_module_release/
+      # 1) 用 v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) JDK；如果你项目比较新，建议 17；老项目保留 11 也行
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 11
+
+      # 3) 可选：官方 Gradle 缓存（更稳）
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      # 4) 注入包名并构建
+      - name: Inject package & build
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+
+          # 把 module.gradle 里的 moduleDescription 前缀改成 "(包名) " 开头
+          # 注意双引号与括号的转义
+          sed -i "s/^moduleDescription *= *\"/moduleDescription = \"(${{ inputs.package_name }}) /" module.gradle
+
+          # 替换 C++ 头文件中的占位包名
+          sed -i "s|com.game.packagename|${{ inputs.package_name }}|g" module/src/main/cpp/game.h
+
+          ./gradlew :module:assembleRelease
+
+      # 5) 用 v4 上传工件
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zygisk-il2cppdumper-${{ github.run_id }}
+          # 如果输出是文件夹，就给到文件夹；如果是 zip，就指向具体 zip
+          path: |
+            out/magisk_module_release/
+            module/build/outputs/**/*.zip
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
+          overwrite: true
